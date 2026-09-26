@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>이수형 때리기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap');
+
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow: hidden;
+            background-color: #0d1117;
+        }
+
+        .title-font {
+            font-family: 'Black Han Sans', sans-serif;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+
+        .custom-glow {
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white min-h-screen flex flex-col justify-between overflow-hidden relative select-none">
+
+    <header class="w-full pt-4 pb-2 px-4 flex flex-col items-center justify-center z-10 bg-slate-900/80 backdrop-blur border-b border-slate-800 shadow-lg">
+        <h1 class="title-font text-4xl sm:text-5xl md:text-6xl text-transparent bg-clip-text bg-gradient-to-r from-red-500 via-orange-400 to-yellow-500 tracking-wider drop-shadow-md text-center">
+            이수형 때리기
+        </h1>
+        <p class="text-xs sm:text-sm text-slate-400 mt-1">나무몽둥이를 빠르게 휘둘러서 스트레스를 해소하세요!</p>
+    </header>
+
+    <div class="absolute top-24 left-4 right-4 flex justify-between items-start pointer-events-none z-10">
+        <!-- Score & Combo Card -->
+        <div class="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-xl backdrop-blur flex flex-col gap-1 min-w-[130px]">
+            <div class="text-xs text-slate-400 uppercase font-bold tracking-wider">이수형이 똥지린 횟수</div>
+            <div id="scoreText" class="title-font text-2xl sm:text-3xl text-red-500">0회</div>
+            <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs font-semibold text-slate-400">Combo:</span>
+                <span id="comboText" class="title-font text-xl text-amber-400">0x</span>
+            </div>
+        </div>
+
+        <!-- Velocity & Impact Meter -->
+        <div class="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-xl backdrop-blur flex flex-col gap-2 min-w-[150px] items-end">
+            <div class="text-xs text-slate-400 uppercase font-bold tracking-wider text-right">휘두르는 속도 (위력)</div>
+            <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700">
+                <div id="velocityBar" class="bg-gradient-to-r from-yellow-500 via-orange-500 to-red-600 h-full w-0 transition-all duration-75"></div>
+            </div>
+            <div id="powerLabel" class="text-xs font-bold text-slate-400">대기 중...</div>
+        </div>
+    </div>
+
+    <main class="relative flex-1 w-full h-full flex items-center justify-center">
+        <canvas id="gameCanvas" class="w-full h-full"></canvas>
+
+        <!-- Floating Hit Floating Text Container -->
+        <div id="floatingTextContainer" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+    </main>
+
+    <footer class="w-full py-3 px-6 z-10 bg-slate-900/90 border-t border-slate-800 flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <button id="resetBtn" class="px-4 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 active:scale-95 text-white font-bold rounded-xl shadow-lg border border-red-500/30 transition flex items-center gap-2 text-sm sm:text-base">
+                <i class="fa-solid fa-kit-medical"> {</i> 치료하기 / 리셋
+            </button>
+            <button id="soundToggleBtn" class="p-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-xl border border-slate-700 transition">
+                <i id="soundIcon" class="fa-solid fa-volume-high text-lg"></i>
+            </button>
+        </div>
+
+        <div class="text-xs text-slate-500 hidden sm:block">
+            <i class="fa-solid fa-hand-pointer mr-1"></i> 마우스/터치로 몽둥이를 마구 휘두르세요!
+        </div>
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreText = document.getElementById('scoreText');
+        const comboText = document.getElementById('comboText');
+        const velocityBar = document.getElementById('velocityBar');
+        const powerLabel = document.getElementById('powerLabel');
+        const floatingTextContainer = document.getElementById('floatingTextContainer');
+        const resetBtn = document.getElementById('resetBtn');
+        const soundToggleBtn = document.getElementById('soundToggleBtn');
+        const soundIcon = document.getElementById('soundIcon');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        let soundEnabled = true;
+        let totalDamage = 0;
+        let comboCount = 0;
+        let comboTimer = null;
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            if (ragdoll) ragdoll.reposition(width / 2, height / 2 - 20);
+        });
+
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new AudioCtx();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        // Procedural Synthesized Impact Sound
+        function playImpactSound(powerRatio) {
+            if (!soundEnabled) return;
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+
+            // Base heavy thud oscillator
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            const baseFreq = 120 + Math.random() * 40;
+            osc.frequency.setValueAtTime(baseFreq * (1 + powerRatio), now);
+            osc.frequency.exponentialRampToValueAtTime(30, now + 0.18);
+
+            const vol = Math.min(1.0, 0.2 + powerRatio * 0.8);
+            gain.gain.setValueAtTime(vol, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.2);
+
+            // Wood Crack noise
+            if (powerRatio > 0.2) {
+                const bufferSize = audioCtx.sampleRate * 0.1;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.setValueAtTime(800 + powerRatio * 1500, now);
+
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(vol * 0.6, now);
+                noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+                noise.connect(filter);
+                filter.connect(noiseGain);
+                noiseGain.connect(audioCtx.destination);
+
+                noise.start(now);
+            }
+        }
+
+        class Point {
+            constructor(x, y, radius = 5, mass = 1) {
+                this.x = x;
+                this.y = y;
+                this.oldx = x;
+                this.oldy = y;
+                this.radius = radius;
+                this.mass = mass;
+                this.pinned = false;
+                this.pinX = x;
+                this.pinY = y;
+            }
+
+            update(gravity, friction) {
+                if (this.pinned) {
+                    this.x = this.pinX;
+                    this.y = this.pinY;
+                    return;
+                }
+
+                const vx = (this.x - this.oldx) * friction;
+                const vy = (this.y - this.oldy) * friction;
+
+                this.oldx = this.x;
+                this.oldy = this.y;
+
+                this.x += vx;
+                this.y += vy + gravity;
+            }
+        }
+
+        class Constraint {
+            constructor(p1, p2, stiffness = 0.95, length = null) {
+                this.p1 = p1;
+                this.p2 = p2;
+                this.stiffness = stiffness;
+                this.length = length !== null ? length : Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            }
+
+            resolve() {
+                const dx = this.p2.x - this.p1.x;
+                const dy = this.p2.y - this.p1.y;
+                const dist = Math.hypot(dx, dy) || 0.0001;
+                const delta = (this.length - dist) / dist * 0.5 * this.stiffness;
+
+                const ox = dx * delta;
+                const oy = dy * delta;
+
+                if (!this.p1.pinned) {
+                    this.p1.x -= ox;
+                    this.p1.y -= oy;
+                }
+                if (!this.p2.pinned) {
+                    this.p2.x += ox;
+                    this.p2.y += oy;
+                }
+            }
+        }
+
+        class BloodParticle {
+            constructor(x, y, vx, vy, size, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.size = size;
+                this.color = color;
+                this.alpha = 1.0;
+                this.gravity = 0.35;
+                this.life = 1.0;
+                this.decay = 0.015 + Math.random() * 0.02;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += this.gravity;
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+                this.alpha -= this.decay;
+            }
+
+            draw(ctx) {
+                if (this.alpha <= 0) return;
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class WoundDecal {
+            constructor(partIndex, relX, relY, radius) {
+                this.partIndex = partIndex; // Index of the body part attached
+                this.relX = relX; // Relative X to body part
+                this.relY = relY; // Relative Y to body part
+                this.radius = radius;
+                this.intensity = 1.0;
+            }
+        }
+
+        class Ragdoll {
+            constructor(centerX, centerY) {
+                this.points = [];
+                this.constraints = [];
+                this.wounds = [];
+                this.buildCharacter(centerX, centerY);
+            }
+
+            reposition(centerX, centerY) {
+                this.points.forEach(p => {
+                    p.pinned = false;
+                });
+                this.buildCharacter(centerX, centerY);
+            }
+
+            buildCharacter(cx, cy) {
+                this.points = [];
+                this.constraints = [];
+
+                // Scaled down to ~2/3 size & head pulled closer to neck
+                const pHead = new Point(cx, cy - 70, 18);
+                const pNeck = new Point(cx, cy - 40, 14);
+                const pHip = new Point(cx, cy + 10, 15);
+
+                const pLShoulder = new Point(cx - 16, cy - 40, 8);
+                const pLElbow = new Point(cx - 32, cy - 8, 7);
+                const pLHand = new Point(cx - 42, cy + 22, 7);
+
+                const pRShoulder = new Point(cx + 16, cy - 40, 8);
+                const pRElbow = new Point(cx + 32, cy - 8, 7);
+                const pRHand = new Point(cx + 42, cy + 22, 7);
+
+                const pLHip = new Point(cx - 12, cy + 18, 8);
+                const pLKnee = new Point(cx - 15, cy + 58, 8);
+                const pLFoot = new Point(cx - 16, cy + 98, 8);
+
+                const pRHip = new Point(cx + 12, cy + 18, 8);
+                const pRKnee = new Point(cx + 15, cy + 58, 8);
+                const pRFoot = new Point(cx + 16, cy + 98, 8);
+
+                // Anchor point to suspend doll steadily
+                const pAnchor = new Point(cx, cy - 100, 5);
+                pAnchor.pinned = true;
+
+                this.points = [
+                    pHead, pNeck, pHip,
+                    pLShoulder, pLElbow, pLHand,
+                    pRShoulder, pRElbow, pRHand,
+                    pLHip, pLKnee, pLFoot,
+                    pRHip, pRKnee, pRFoot,
+                    pAnchor
+                ];
+
+                // Stronger stiffness for tight solid joints
+                const link = (i1, i2, stiff = 0.98) => {
+                    this.constraints.push(new Constraint(this.points[i1], this.points[i2], stiff));
+                };
+
+                // Tight tether to anchor
+                link(15, 0, 0.4);
+
+                // Spine & Neck (very tight)
+                link(0, 1, 1.0);
+                link(1, 2, 1.0);
+
+                // Arms
+                link(1, 3, 0.95);
+                link(3, 4, 0.95);
+                link(4, 5, 0.95);
+
+                link(1, 6, 0.95);
+                link(6, 7, 0.95);
+                link(7, 8, 0.95);
+
+                // Legs
+                link(2, 9, 0.95);
+                link(9, 10, 0.95);
+                link(10, 11, 0.95);
+
+                link(2, 12, 0.95);
+                link(12, 13, 0.95);
+                link(13, 14, 0.95);
+
+                // Diagonal & cross-bracing constraints to eliminate floppy behavior
+                link(3, 6, 0.95); // Shoulder width rigid
+                link(9, 12, 0.95); // Hip width rigid
+                link(1, 9, 0.9);   // Neck to Hip L
+                link(1, 12, 0.9);  // Neck to Hip R
+                link(0, 2, 0.95);  // Head directly braced to Hip to prevent neck bending too far
+                link(3, 12, 0.85); // Cross-brace torso
+                link(6, 9, 0.85);
+            }
+
+            update() {
+                const gravity = 0.5;
+                const friction = 0.92; // Slightly higher friction for punchy feel
+
+                this.points.forEach(p => p.update(gravity, friction));
+
+                // Constrain floor/walls
+                const floorY = height - 50;
+                this.points.forEach(p => {
+                    if (p.y > floorY) {
+                        p.y = floorY;
+                        p.oldy = p.y + (p.y - p.oldy) * 0.2;
+                    }
+                    if (p.x < 30) p.x = 30;
+                    if (p.x > width - 30) p.x = width - 30;
+                });
+
+                // Increase constraint iteration count for firm joints
+                for (let i = 0; i < 15; i++) {
+                    this.constraints.forEach(c => c.resolve());
+                }
+            }
+
+            addWound(x, y, radius) {
+                // Find closest body segment or point
+                let minDist = Infinity;
+                let closestIdx = 0;
+
+                this.points.forEach((p, idx) => {
+                    if (idx === 15) return; // skip anchor
+                    const d = Math.hypot(p.x - x, p.y - y);
+                    if (d < minDist) {
+                        minDist = d;
+                        closestIdx = idx;
+                    }
+                });
+
+                const p = this.points[closestIdx];
+                this.wounds.push(new WoundDecal(
+                    closestIdx,
+                    x - p.x,
+                    y - p.y,
+                    radius
+                ));
+            }
+
+            draw(ctx) {
+                const pts = this.points;
+
+                const drawLimb = (p1, p2, width, color, cap = true) => {
+                    ctx.save();
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = width;
+                    ctx.lineCap = cap ? 'round' : 'butt';
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.stroke();
+                    ctx.restore();
+                };
+
+                // 1. Black Pants (2/3 size proportions)
+                drawLimb(pts[9], pts[10], 16, '#1e293b'); 
+                drawLimb(pts[10], pts[11], 14, '#0f172a'); 
+                drawLimb(pts[12], pts[13], 16, '#1e293b'); 
+                drawLimb(pts[13], pts[14], 14, '#0f172a'); 
+
+                // 2. Black Slippers
+                const drawSlipper = (p) => {
+                    ctx.save();
+                    ctx.fillStyle = '#090d16';
+                    ctx.beginPath();
+                    ctx.ellipse(p.x, p.y + 3, 10, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#334155';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                    ctx.restore();
+                };
+                drawSlipper(pts[11]);
+                drawSlipper(pts[14]);
+
+                // 3. Navy Blue Fleece Hoodie Jacket
+                drawLimb(pts[3], pts[4], 15, '#1e3a8a'); 
+                drawLimb(pts[4], pts[5], 12, '#1d4ed8'); 
+                drawLimb(pts[6], pts[7], 15, '#1e3a8a'); 
+                drawLimb(pts[7], pts[8], 12, '#1d4ed8'); 
+
+                // Hands
+                ctx.fillStyle = '#ffdbac';
+                ctx.beginPath();
+                ctx.arc(pts[5].x, pts[5].y, 5, 0, Math.PI * 2);
+                ctx.arc(pts[8].x, pts[8].y, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Navy Fleece Torso
+                ctx.save();
+                ctx.fillStyle = '#1e3a8a';
+                ctx.beginPath();
+                ctx.moveTo(pts[3].x - 4, pts[3].y);
+                ctx.lineTo(pts[6].x + 4, pts[6].y);
+                ctx.lineTo(pts[12].x + 5, pts[12].y);
+                ctx.lineTo(pts[9].x - 5, pts[9].y);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.strokeStyle = '#1d4ed8';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.strokeStyle = '#475569';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(pts[1].x, pts[1].y);
+                ctx.lineTo(pts[2].x, pts[2].y);
+                ctx.stroke();
+                ctx.restore();
+
+                // 4. Head & Face (Scaled down to 18px radius)
+                const head = pts[0];
+                ctx.save();
+
+                // Head Base Skin
+                ctx.fillStyle = '#ffdbac';
+                ctx.beginPath();
+                ctx.arc(head.x, head.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Provocative / Smirking Face (깐족거리는 눈과 입모양)
+                // Eyebrows (Smug raised eyebrow)
+                ctx.strokeStyle = '#0f172a';
+                ctx.lineWidth = 1.8;
+
+                ctx.beginPath();
+                ctx.moveTo(head.x - 10, head.y - 7);
+                ctx.lineTo(head.x - 3, head.y - 4);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(head.x + 3, head.y - 8);
+                ctx.lineTo(head.x + 10, head.y - 11); // raised eyebrow
+                ctx.stroke();
+
+                // Annoying Smirking Eyes
+                ctx.fillStyle = '#0f172a';
+                ctx.beginPath();
+                ctx.arc(head.x - 6, head.y - 2, 2.5, 0, Math.PI * 2);
+                ctx.arc(head.x + 6, head.y - 3, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Smirking Mouth (사악한 깐족거리는 미소)
+                ctx.strokeStyle = '#7f1d1d';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(head.x - 8, head.y + 6);
+                ctx.quadraticCurveTo(head.x, head.y + 12, head.x + 9, head.y + 4);
+                ctx.stroke();
+
+                // Tongue sticking out slightly
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(head.x + 4, head.y + 8, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Bushy Messy Hair (덮수룩한 머리)
+                ctx.fillStyle = '#0f172a';
+                ctx.beginPath();
+                // Outer bushy afro/messy contour
+                ctx.arc(head.x, head.y - 4, 21, Math.PI * 0.75, Math.PI * 2.25);
+                ctx.lineTo(head.x + 20, head.y - 2);
+                ctx.lineTo(head.x + 14, head.y + 3);
+                ctx.lineTo(head.x + 8, head.y - 2);
+                ctx.lineTo(head.x + 2, head.y + 2);
+                ctx.lineTo(head.x - 4, head.y - 3);
+                ctx.lineTo(head.x - 10, head.y + 3);
+                ctx.lineTo(head.x - 16, head.y - 2);
+                ctx.lineTo(head.x - 21, head.y + 2);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+
+                // 5. Draw Wound Decals on Top
+                this.wounds.forEach(w => {
+                    const p = pts[w.partIndex];
+                    if (!p) return;
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(153, 27, 27, 0.85)';
+                    ctx.beginPath();
+                    ctx.arc(p.x + w.relX, p.y + w.relY, w.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = 'rgba(69, 10, 10, 0.9)';
+                    ctx.beginPath();
+                    ctx.arc(p.x + w.relX, p.y + w.relY, w.radius * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+            }
+        }
+
+        class WoodenClub {
+            constructor() {
+                this.x = width / 2 + 100;
+                this.y = height / 2;
+                this.prevX = this.x;
+                this.prevY = this.y;
+                this.vx = 0;
+                this.vy = 0;
+                this.angle = -Math.PI / 4;
+                this.isDragging = false;
+                this.length = 110;
+                this.width = 22;
+            }
+
+            update(mouseX, mouseY, isDown) {
+                this.prevX = this.x;
+                this.prevY = this.y;
+
+                if (isDown) {
+                    this.x = mouseX;
+                    this.y = mouseY;
+                    this.isDragging = true;
+                } else {
+                    // Return gracefully to idle position near side
+                    this.x += (width * 0.75 - this.x) * 0.1;
+                    this.y += (height * 0.5 - this.y) * 0.1;
+                    this.isDragging = false;
+                }
+
+                this.vx = this.x - this.prevX;
+                this.vy = this.y - this.prevY;
+
+                // Dynamically rotate weapon along swing path
+                const speed = Math.hypot(this.vx, this.vy);
+                if (speed > 1) {
+                    const targetAngle = Math.atan2(this.vy, this.vx) + Math.PI / 4;
+                    this.angle += (targetAngle - this.angle) * 0.3;
+                } else {
+                    this.angle += (-Math.PI / 4 - this.angle) * 0.1;
+                }
+
+                return speed;
+            }
+
+            // Get head tip position for accurate collision detection
+            getTipPosition() {
+                const tipX = this.x + Math.cos(this.angle - Math.PI / 4) * this.length;
+                const tipY = this.y + Math.sin(this.angle - Math.PI / 4) * this.length;
+                return { x: tipX, y: tipY };
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                // Club Shadow
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+                ctx.shadowBlur = 12;
+                ctx.shadowOffsetY = 8;
+
+                // Wooden Handle (Grip tape)
+                ctx.fillStyle = '#78350f';
+                ctx.fillRect(-8, 0, 16, 25);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(-9, 18, 18, 5);
+
+                // Wooden Bat Body (Gradients for texture)
+                const grad = ctx.createLinearGradient(-15, 0, 15, 0);
+                grad.addColorStop(0, '#a16207');
+                grad.addColorStop(0.5, '#d97706');
+                grad.addColorStop(1, '#78350f');
+
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.moveTo(-7, 25);
+                ctx.lineTo(-14, -this.length);
+                ctx.arc(0, -this.length, 14, Math.PI, 0);
+                ctx.lineTo(7, 25);
+                ctx.closePath();
+                ctx.fill();
+
+                // Wood Grain Lines
+                ctx.strokeStyle = 'rgba(69, 26, 3, 0.4)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-2, 20); ctx.lineTo(-4, -this.length + 10);
+                ctx.moveTo(3, 15); ctx.lineTo(5, -this.length + 15);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        const ragdoll = new Ragdoll(width / 2, height / 2 - 20);
+        const club = new WoodenClub();
+        const bloodParticles = [];
+
+        let pointerX = width / 2;
+        let pointerY = height / 2;
+        let isPointerDown = false;
+
+        function updatePointer(e) {
+            const rect = canvas.getBoundingClientRect();
+            if (e.touches && e.touches.length > 0) {
+                pointerX = e.touches[0].clientX - rect.left;
+                pointerY = e.touches[0].clientY - rect.top;
+            } else {
+                pointerX = e.clientX - rect.left;
+                pointerY = e.clientY - rect.top;
+            }
+        }
+
+        window.addEventListener('mousedown', (e) => {
+            isPointerDown = true;
+            updatePointer(e);
+            initAudio();
+        });
+        window.addEventListener('mousemove', (e) => updatePointer(e));
+        window.addEventListener('mouseup', () => isPointerDown = false);
+
+        window.addEventListener('touchstart', (e) => {
+            isPointerDown = true;
+            updatePointer(e);
+            initAudio();
+        }, { passive: true });
+        window.addEventListener('touchmove', (e) => updatePointer(e), { passive: true });
+        window.addEventListener('touchend', () => isPointerDown = false);
+
+        function checkCollisions(swingSpeed) {
+            const clubTip = club.getTipPosition();
+            const hitThreshold = 30;
+
+            ragdoll.points.forEach((p, idx) => {
+                if (idx === 15) return; 
+
+                const dist = Math.hypot(p.x - clubTip.x, p.y - clubTip.y);
+
+                if (dist < hitThreshold && swingSpeed > 4) {
+                    const power = Math.min(swingSpeed * 1.8, 65);
+                    const powerRatio = Math.min(swingSpeed / 35, 1.0);
+
+                    const angle = Math.atan2(club.vy, club.vx);
+                    p.x += Math.cos(angle) * power;
+                    p.y += Math.sin(angle) * power;
+
+                    ragdoll.points.forEach((p2, idx2) => {
+                        const d2 = Math.hypot(p2.x - p.x, p2.y - p.y);
+                        if (d2 < 45 && idx2 !== idx) {
+                            p2.x += Math.cos(angle) * power * 0.5;
+                            p2.y += Math.sin(angle) * power * 0.5;
+                        }
+                    });
+
+                    // Sound Effect
+                    playImpactSound(powerRatio);
+
+                    // Add wound decal on character
+                    ragdoll.addWound(p.x, p.y, Math.min(8, 3 + powerRatio * 5));
+
+                    // Blood Splatter Particles
+                    const particleCount = Math.floor(5 + powerRatio * 15);
+                    for (let i = 0; i < particleCount; i++) {
+                        const pAngle = angle + (Math.random() - 0.5) * 1.5;
+                        const pSpeed = (2 + Math.random() * 10) * (0.5 + powerRatio);
+                        const bloodColor = Math.random() > 0.3 ? '#dc2626' : '#991b1b';
+                        bloodParticles.push(new BloodParticle(
+                            p.x,
+                            p.y,
+                            Math.cos(pAngle) * pSpeed,
+                            Math.sin(pAngle) * pSpeed,
+                            1.5 + Math.random() * 4,
+                            bloodColor
+                        ));
+                    }
+
+                    // Score calculation reduced by 10x
+                    const addedScore = Math.max(1, Math.floor((power * 1.5 * (1 + comboCount * 0.1)) / 10));
+                    totalDamage += addedScore;
+                    scoreText.innerText = `${totalDamage.toLocaleString()}회`;
+
+                    comboCount++;
+                    comboText.innerText = comboCount + 'x';
+
+                    if (comboTimer) clearTimeout(comboTimer);
+                    comboTimer = setTimeout(() => {
+                        comboCount = 0;
+                        comboText.innerText = '0x';
+                    }, 1200);
+
+                    spawnFloatingText(p.x, p.y, addedScore, powerRatio);
+                }
+            });
+        }
+
+        function spawnFloatingText(x, y, damage, powerRatio) {
+            const el = document.createElement('div');
+            el.className = 'absolute title-font pointer-events-none select-none transition-all duration-700 ease-out';
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+            
+            if (powerRatio > 0.6) {
+                el.innerText = `크리티컬! +${damage}회`;
+                el.style.color = '#ef4444';
+                el.style.fontSize = '1.5rem';
+                el.style.textShadow = '0 0 10px rgba(239, 68, 68, 0.8)';
+            } else {
+                el.innerText = `+${damage}회`;
+                el.style.color = '#f59e0b';
+                el.style.fontSize = '1.1rem';
+            }
+
+            floatingTextContainer.appendChild(el);
+
+            setTimeout(() => {
+                el.style.transform = `translate(-50%, -50px) scale(1.1)`;
+                el.style.opacity = '0';
+            }, 20);
+
+            setTimeout(() => {
+                el.remove();
+            }, 700);
+        }
+
+        resetBtn.addEventListener('click', () => {
+            totalDamage = 0;
+            comboCount = 0;
+            scoreText.innerText = '0회';
+            comboText.innerText = '0x';
+            ragdoll.wounds = [];
+            ragdoll.reposition(width / 2, height / 2 - 20);
+        });
+
+        soundToggleBtn.addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            if (soundEnabled) {
+                soundIcon.className = 'fa-solid fa-volume-high text-lg';
+            } else {
+                soundIcon.className = 'fa-solid fa-volume-xmark text-lg text-red-400';
+            }
+        });
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. Physics update
+            ragdoll.update();
+
+            // 2. Club update
+            const swingSpeed = club.update(pointerX, pointerY, isPointerDown);
+
+            // Update UI velocity bar
+            const speedRatio = Math.min(swingSpeed / 30, 1.0);
+            velocityBar.style.width = `${Math.floor(speedRatio * 100)}%`;
+            if (speedRatio > 0.75) {
+                powerLabel.innerText = '🔥 초강력 타격!';
+                powerLabel.className = 'text-xs font-bold text-red-500 animate-pulse';
+            } else if (speedRatio > 0.3) {
+                powerLabel.innerText = '⚡ 일반 타격';
+                powerLabel.className = 'text-xs font-bold text-amber-400';
+            } else {
+                powerLabel.innerText = '대기 중...';
+                powerLabel.className = 'text-xs font-bold text-slate-400';
+            }
+
+            // 3. Collision Checks
+            if (isPointerDown) {
+                checkCollisions(swingSpeed);
+            }
+
+            // 4. Render Ragdoll
+            ragdoll.draw(ctx);
+
+            // 5. Render Blood Particles
+            for (let i = bloodParticles.length - 1; i >= 0; i--) {
+                const p = bloodParticles[i];
+                p.update();
+                p.draw(ctx);
+                if (p.alpha <= 0) bloodParticles.splice(i, 1);
+            }
+
+            // 6. Render Weapon
+            club.draw(ctx);
+
+            requestAnimationFrame(animate);
+        }
+
+        window.onload = function() {
+            animate();
+        };
+    </script>
+</body>
+</html>
